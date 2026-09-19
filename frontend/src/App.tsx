@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { BrainMode } from './BrainView'
 import { BrainView } from './BrainView'
-import { Decision, Legend, Panel, Ribbon, Screen, Senses, CommandGauges } from './Panels'
+import { Decision, Legend, Panel, Ribbon, Screen, Senses, CommandGauges, Translation } from './Panels'
 import { Probe } from './Probe'
 import { Replay } from './Replay'
 import { api } from './api'
@@ -188,6 +188,12 @@ export function App() {
           </div>
 
           <div className="column">
+            <Panel
+              title="What the fly is pressing"
+              hint="every stage of the translation - the fly emits urges, never buttons"
+            >
+              <Translation snapshot={snapshot} />
+            </Panel>
             <Panel title="Descending output" hint="the fly's commands to its body">
               <CommandGauges command={Object.fromEntries(Object.entries(snapshot.fly?.command ?? {}).map(([k, v]) => [k, v.rate]))} card={brain} hot={hot} />
             </Panel>
@@ -204,8 +210,18 @@ export function App() {
                     </dd>
                   </div>
                   <div>
-                    <dt>held-out</dt>
-                    <dd>{readout.info.cv_score.toFixed(3)} neg-MSE on {readout.info.n_samples} decisions</dd>
+                    <dt>held-out calls</dt>
+                    <dd>
+                      {readout.info.accuracy === null
+                        ? `no episode held out (cv ${readout.info.cv_score.toFixed(3)})`
+                        : `${(readout.info.accuracy * 100).toFixed(0)}% right vs ${((readout.info.baseline ?? 0) * 100).toFixed(0)}% always-same-answer`}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>cv (not accuracy)</dt>
+                    <dd>
+                      {readout.info.cv_score.toFixed(3)} R² on 0/1 targets, {readout.info.n_samples} decisions
+                    </dd>
                   </div>
                   <div>
                     <dt>listens to</dt>

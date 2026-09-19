@@ -30,10 +30,6 @@ from dotenv import load_dotenv
 
 from fly_games.brain import COMMAND_GROUPS, FlyBrainClient, FlyReadout, shared_client
 from fly_games.catalog import get_game
-
-# The one decision every game exposes that is a reflex rather than a plan: all
-# three declare it, and it is the only label worth overriding the fitted map for.
-REFLEX_LABEL = "escape"
 from fly_games.encode import encode_frame, encode_thumb
 from fly_games.history import HistoryArchive
 
@@ -88,8 +84,6 @@ class Engine:
         self.hold_frames = self.game.meta.default_hold_frames
         self.seed = self.game.meta.default_seed if seed is None else int(seed)
         self.previous_action = "wait"
-        # Let the fly's own escape reflex outvote a trained readout. See decide().
-        self.reflex_override = True
         self.last_brain: dict | None = None
         self.last_scene: str | None = None
         self.input_frame: int | None = None
@@ -249,22 +243,11 @@ class Engine:
         latency_ms = round((monotonic() - started) * 1000, 2)
 
         readout = self.get_readout()
-        reflex, reflex_probs = game.fly_hand_decode(decision.command, observation)
-        source = "fly"
         if self.policy != "fly-hand" and readout.trained:
             coarse, probs = readout.decode(decision.feature())
             model_name = f"fly-readout({readout.model.kind})"
-            # The readout is fitted open-loop on states the scripted controller
-            # visited, so in play it drifts onto states it was never trained on
-            # and its confidence stops meaning much. The escape neurons are not
-            # fitted: an over-active giant-fibre reflex means "jump" whatever the
-            # map says about a state it has never seen. So the reflex overrides
-            # the readout rather than being replaced by it.
-            if self.reflex_override and reflex == REFLEX_LABEL and coarse != reflex:
-                coarse, probs, source = reflex, reflex_probs, "reflex"
-                model_name = f"fly-readout({readout.model.kind})+reflex"
         else:
-            coarse, probs = reflex, reflex_probs
+            coarse, probs = game.fly_hand_decode(decision.command, observation)
             model_name = "fly-hand"
 
         fine = game.fly_expand(coarse, observation)
@@ -276,7 +259,7 @@ class Engine:
             "probabilities": probs,
             "coarse": coarse,
             "latency_ms": latency_ms,
-            "source": source,
+            "source": "fly",
             "command": {k: v["rate"] for k, v in decision.command.items()},
             "input": decision.input,
         }

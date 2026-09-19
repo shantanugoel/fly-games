@@ -309,39 +309,3 @@ def test_a_seed_reaches_the_emulator(tmp_path):
         default.close()
         forced.close()
 
-
-# --- the escape reflex outranks the fitted map --------------------------------
-
-def test_a_firing_escape_reflex_overrides_a_trained_readout(engine, monkeypatch):
-    """The readout is fitted open-loop; in play it meets states it never saw.
-
-    Measured on Mario: from decision 16 the escape neurons run at 17-50 Hz while
-    the readout answers `proceed`, and the fly dies at 27. With the override it
-    reaches 150. Before this, the readout simply replaced the rule that worked.
-    """
-    engine.set_policy("fly")
-
-    # Force the disagreement: a readout that always says proceed, a reflex that
-    # always says escape.
-    class AlwaysProceed:
-        trained = True
-
-        class model:
-            kind = "stub"
-
-        def decode(self, feature):
-            return "proceed", {"proceed": 0.6, "escape": 0.4}
-
-    engine._readout_cache = AlwaysProceed()
-    monkeypatch.setattr(engine.game, "fly_hand_decode",
-                        lambda command, obs: ("escape", {"escape": 0.8, "proceed": 0.2}))
-
-    engine.reflex_override = True
-    _action, diagnostics = engine.decide(engine.observation)
-    assert diagnostics["coarse"] == "escape"
-    assert diagnostics["source"] == "reflex"
-
-    engine.reflex_override = False
-    _action, diagnostics = engine.decide(engine.observation)
-    assert diagnostics["coarse"] == "proceed"
-    assert diagnostics["source"] == "fly"

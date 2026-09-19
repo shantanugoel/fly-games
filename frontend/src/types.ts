@@ -31,6 +31,11 @@ export interface ReadoutInfo {
   cv_score: number
   n_samples: number
   trained_at: string | null
+  // cv_score is a regression R^2 on 0/1 targets and reads as failure for a
+  // readout that decides correctly almost every time. accuracy is the number
+  // that actually means something; both are shown so the difference is visible.
+  accuracy: number | null
+  baseline: number | null
 }
 
 export interface Snapshot {

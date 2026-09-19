@@ -44,7 +44,6 @@ def _play(args: argparse.Namespace) -> int:
     engine = Engine(game_id=args.game, seed=args.seed,
                     **({"readout_dir": args.readouts} if args.readouts else {}))
     engine.set_policy(args.policy)
-    engine.reflex_override = not args.no_reflex
     coarse_labels = engine.game.fly_coarse_actions()
     readout = engine.get_readout()
     if readout.trained and readout.info.accuracy is not None \
@@ -287,8 +286,6 @@ def build_parser() -> argparse.ArgumentParser:
     play.add_argument("--readouts", default=None,
                       help="where to load readouts from (default: ./readouts; point it at an "
                            "empty directory to fly on the zero-shot rule)")
-    play.add_argument("--no-reflex", action="store_true",
-                      help="let the readout win even when the fly's escape neurons are firing")
     play.add_argument("-v", "--verbose", action="store_true",
                       help="also print the sensory drives behind each decision")
 

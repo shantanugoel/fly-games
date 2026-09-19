@@ -1310,3 +1310,64 @@ dd {
     height: 520px;
   }
 }
+/* The translation strip: urges -> decision -> move -> buttons. */
+.translation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.translation-step {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.translation-tag {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dimmer);
+  white-space: nowrap;
+}
+
+.translation-value {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.translation-value b {
+  color: var(--dim);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.translation-value.idle { color: var(--dimmer); font-style: italic; }
+.translation-value.decision { color: var(--accent); font-weight: 600; }
+.translation-value.action { color: var(--proceed); font-weight: 600; }
+
+.translation-arrow {
+  align-self: center;
+  color: var(--dimmer);
+  font-size: 15px;
+}
+
+.translation-key {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 3px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}

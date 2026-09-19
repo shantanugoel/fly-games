@@ -287,3 +287,52 @@ export function Legend({ card }: { card: BrainCard | null }) {
     </div>
   )
 }
+
+/** The whole translation, in one line, so the chain is never a mystery.
+ *
+ * The fly has no concept of a controller: it emits graded urges from twelve
+ * descending neuron groups, and a per-game decoder turns the winning urge into
+ * a button combination. Showing only the urges leaves the user guessing what
+ * any of it caused, and showing only the buttons hides that the fly, not a
+ * script, chose it. So show every stage, left to right, with the buttons as
+ * actual keys.
+ */
+export function Translation({ snapshot }: { snapshot: Snapshot }) {
+  const { thought, fly } = snapshot
+  const rates = Object.entries(fly?.command ?? {})
+    .map(([name, value]) => [name, value.rate] as const)
+    .sort((a, b) => b[1] - a[1])
+  const loudest = rates.filter(([, rate]) => rate > 0).slice(0, 2)
+  const buttons = thought.buttons ?? []
+  return (
+    <div className="translation">
+      <div className="translation-step">
+        <span className="translation-tag">the fly's loudest urge</span>
+        {loudest.length === 0
+          ? <span className="translation-value idle">all twelve groups quiet</span>
+          : loudest.map(([name, rate]) => (
+            <span className="translation-value" key={name}>
+              {name.replace('_', ' ')} <b>{rate.toFixed(1)} Hz</b>
+            </span>
+          ))}
+      </div>
+      <span className="translation-arrow">→</span>
+      <div className="translation-step">
+        <span className="translation-tag">read it as</span>
+        <span className="translation-value decision">{thought.coarse ?? '—'}</span>
+      </div>
+      <span className="translation-arrow">→</span>
+      <div className="translation-step">
+        <span className="translation-tag">{snapshot.game.short_name ?? 'the game'} does</span>
+        <span className="translation-value action">{thought.label ?? thought.action ?? '—'}</span>
+      </div>
+      <span className="translation-arrow">→</span>
+      <div className="translation-step">
+        <span className="translation-tag">controller receives</span>
+        {buttons.length === 0
+          ? <kbd className="translation-key">no buttons</kbd>
+          : buttons.map((button) => <kbd className="translation-key" key={button}>{button}</kbd>)}
+      </div>
+    </div>
+  )
+}
