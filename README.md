@@ -90,6 +90,8 @@ Headless:
 ```sh
 fly-games play  --game mario --policy fly --decisions 30
 fly-games play  --game mario --policy scripted -v      # -v prints the senses
+fly-games play  --game kungfu --seed 7                 # vary the seed for spread
+fly-games play  --game mario --readouts /tmp/empty     # ignore readouts, fly on the rule
 fly-games train --game mario --episodes 8 --decisions 40
 fly-games readouts
 ```
@@ -117,6 +119,38 @@ labels they were fitted against, so a stale file fails loudly instead of
 silently mislabelling decisions. Point `FLY_GAMES_READOUTS` elsewhere to keep
 several.
 
+### Reading `cv_score`, and why you should
+
+You never need the fly to survive in order to train it. `train` watches the
+**scripted** policy play and records what the fly's descending neurons do while
+that happens; the fly's own readout is not in the loop, so an early death costs
+you nothing. Episodes are also force-cut at `--decisions` and reseeded, so
+`--episodes 8` really is eight different starts.
+
+`cv_score` is the number that decides whether the file is worth keeping. It is
+held-out ridge MSE where **0 means "no better than predicting the mean"**, so a
+negative score is not a weak readout, it is a readout that learned nothing — and
+it is worse than nothing, because installing it *replaces* the zero-shot rule
+that was already working.
+
+Mario demonstrates the trap. Measured over 120 decisions on the same seed:
+
+| pilot                        | outcome              |
+| ---------------------------- | -------------------- |
+| zero-shot rule               | survived all 120     |
+| trained readout, cv −0.067   | died at decision 27  |
+| trained readout, cv −0.208   | died at decision 27  |
+
+More data made it worse, not better: 160 samples scored −0.067 and 1 440 scored
+−0.208. That is the honest answer, and the reason is visible in
+`games/mario/fly.py` — enemies, gaps and walls are all folded onto the same two
+channels (`loom`, `threat`), so a goomba 100 px away and a pit 100 px away look
+alike to the fly while the scripted policy jumps for one and not the other. The
+label is not predictable from the features, so no amount of training recovers
+it. The fix is to encode more of the game into the fly's sensory neurons, not to
+train longer. `train` warns when `cv_score <= 0` and `play` repeats the warning
+when it loads such a readout.
+
 ## Policies
 
 | policy     | what decides                                                            |
@@ -124,6 +158,14 @@ several.
 | `fly`      | the trained readout if there is one, otherwise the zero-shot rule        |
 | `fly-hand` | force the zero-shot rule over the descending rates, never the readout    |
 | `scripted` | deterministic baseline, no brain — also the label source for training    |
+
+Everything here is deterministic. The connectome is a frozen leaky integrate-and
+fire network reseeded on every episode reset, and the cartridges are themselves
+deterministic, so the same game and window reproduce decision-for-decision across
+separate processes — including across `--seed`, which moves the emulator's RNG
+but not a scripted Nintendo opening. Use `--seed` to sample starts, not to get
+variety. If a run does not reproduce, suspect leftover state or a readout that
+changed underneath you, not the brain.
 
 ## Frontend
 

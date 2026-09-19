@@ -41,12 +41,19 @@ def _play(args: argparse.Namespace) -> int:
     """Run the fly through a real episode and print each thought as it happens."""
     from fly_games.engine import Engine
 
-    engine = Engine(game_id=args.game)
+    engine = Engine(game_id=args.game, seed=args.seed,
+                    **({"readout_dir": args.readouts} if args.readouts else {}))
     engine.set_policy(args.policy)
     coarse_labels = engine.game.fly_coarse_actions()
     readout = engine.get_readout()
+    if readout.trained and (readout.info.cv_score or 0) <= 0:
+        print("note: this readout's cross-validation score is not better than "
+              "predicting the mean,\n"
+              "      so it replaces a hand rule that works with a map that does not.\n"
+              "      Compare with: --readouts /tmp/empty")
     print(f"{engine.game.meta.title} - policy {engine.policy} - "
-          f"{'readout ' + str(readout.info.kind) if readout.trained else 'zero-shot rule'}")
+          f"{'readout ' + str(readout.info.kind) if readout.trained else 'zero-shot rule'}"
+          f" - seed {engine.seed}")
     print(f"coarse decisions: {', '.join(coarse_labels)}")
     print(f"{'#':>4}  {'frames':>7}  {'reward':>7}  {'decision':<12} -> {'action':<16} "
           f"{'p':>5}  {'ms':>6}")
@@ -54,13 +61,10 @@ def _play(args: argparse.Namespace) -> int:
     steps = 0
     try:
         while steps < args.decisions:
-            obs = engine.observation
-            action, diagnostics = engine.decide(obs)
-            result = engine.game.advance(engine.env, action, engine.hold_frames, obs)
-            engine.game.finish_memory(engine.memory, obs, engine.env,
-                                      engine.info, action, result)
-            engine.info = result.info
-            engine.frames += result.frames_executed
+            stepped = engine.step()
+            if stepped is None:
+                break
+            action, diagnostics, result = stepped
             steps += 1
             probs = diagnostics.get("probabilities") or {}
             coarse = diagnostics.get("coarse") or "scripted"
@@ -111,6 +115,19 @@ def _train(args: argparse.Namespace) -> int:
             # printing a number that looks comparable to a real one.
             print("  note: this was a single episode, so the score is plain k-fold, "
                   "not leave-one-episode-out. Raise --episodes.")
+        if meta["cv_score"] <= 0:
+            # A readout at or below the mean has learned nothing, and it is
+            # worse than nothing: it replaces the hand rule that already works.
+            # Mario does this today - the encoder folds enemies, gaps and walls
+            # onto the same two channels, so the label is not predictable from
+            # the features and more data only fits the ambiguity harder.
+            print("  WARNING: cv_score <= 0 means this readout is no better than "
+                  "predicting the mean,\n"
+                  "           and it now overrides the zero-shot rule that worked. "
+                  "Try:\n"
+                  f"             fly-games play --game {args.game} --readouts /tmp/empty"
+                  f"   # the hand rule\n"
+                  f"             rm {meta['path']}")
         print(f"Now: fly-games play --game {args.game} --policy fly")
         return 0
     finally:
@@ -247,6 +264,11 @@ def build_parser() -> argparse.ArgumentParser:
     _game_flag(play)
     play.add_argument("--policy", choices=POLICIES, default="fly")
     play.add_argument("--decisions", type=int, default=30, help="how many fly decisions to make")
+    play.add_argument("--seed", type=int, default=None,
+                      help="emulator seed (default: the game's own); vary it to see run-to-run spread")
+    play.add_argument("--readouts", default=None,
+                      help="where to load readouts from (default: ./readouts; point it at an "
+                           "empty directory to fly on the zero-shot rule)")
     play.add_argument("-v", "--verbose", action="store_true",
                       help="also print the sensory drives behind each decision")
 

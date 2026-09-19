@@ -259,3 +259,52 @@ def test_the_snapshot_carries_a_compact_brain_record(engine):
     assert isinstance(fly["input"], dict)
     # The per-neuron heat map only rides along when someone asked for it.
     assert "field" not in fly
+
+# --- the loop has to re-observe ----------------------------------------------
+# `play` used to hand the fly the same frame forever. The loop was inlined in
+# the CLI and skipped the re-observe, so every decision was made against the
+# reset screen: Mario never moved and died about two seconds in. Nothing in the
+# suite caught it, because each test either refreshed by hand or never read the
+# observation between steps.
+
+def test_each_step_leaves_the_fly_looking_at_the_new_world(engine):
+    engine.set_policy("fly")
+    seen = []
+    for _ in range(12):
+        seen.append(dict(engine.observation.get("mario") or {}))
+        if engine.step() is None:
+            break
+    xs = [row.get("x") for row in seen]
+    assert len(seen) > 2, "the engine refused to step at all"
+    assert len(set(xs)) > 1, f"the fly decided {len(seen)} times against x={xs[0]}: nothing moved"
+
+
+def test_a_step_reports_the_action_it_actually_took(engine):
+    engine.set_policy("scripted")
+    stepped = engine.step()
+    assert stepped is not None
+    action, _diagnostics, result = stepped
+    assert action in {a.key for a in engine.game.actions}
+    assert result.frames_executed == engine.hold_frames
+    assert engine.frames >= result.frames_executed
+
+
+def test_a_step_refuses_once_the_episode_is_over(engine):
+    engine.set_policy("scripted")
+    engine.done = True
+    assert engine.step() is None
+
+
+def test_a_seed_reaches_the_emulator(tmp_path):
+    """`play --seed` is the only way to see run-to-run spread, so it has to
+    actually change what the emulator starts from."""
+    from fly_games.engine import Engine
+
+    default = Engine(game_id="mario", readout_dir=tmp_path / "a")
+    forced = Engine(game_id="mario", readout_dir=tmp_path / "b", seed=1234)
+    try:
+        assert default.seed == default.game.meta.default_seed
+        assert forced.seed == 1234
+    finally:
+        default.close()
+        forced.close()

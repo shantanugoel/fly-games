@@ -60,7 +60,8 @@ def _scaled(arr: np.ndarray, shape: tuple[int, int] | None = None) -> np.ndarray
 class Engine:
     """One playable episode plus the fly brain driving it."""
 
-    def __init__(self, game_id: str = "mario", readout_dir: str | Path = "readouts"):
+    def __init__(self, game_id: str = "mario", readout_dir: str | Path = "readouts",
+                 seed: int | None = None):
         load_dotenv()
         self.lock = threading.RLock()
         self.wake = threading.Event()
@@ -81,7 +82,7 @@ class Engine:
         self.archive = HistoryArchive()
         self._brain: FlyBrainClient | None = None
         self.hold_frames = self.game.meta.default_hold_frames
-        self.seed = self.game.meta.default_seed
+        self.seed = self.game.meta.default_seed if seed is None else int(seed)
         self.previous_action = "wait"
         self.last_brain: dict | None = None
         self.last_scene: str | None = None
@@ -369,6 +370,44 @@ class Engine:
                 "brain": self._history_brain(brain, diagnostics),
             })
         self.revision += 1
+
+    def step(self):
+        """Take one decision on the caller's thread and return it.
+
+        Returns ``(action, diagnostics, result)``, or None when there is nothing
+        to run. This is the whole loop: it decides, advances the emulator, and
+        then re-observes. Callers must not assemble those three themselves, in
+        that order, because leaving the re-observe out is invisible in a unit
+        test and fatal in play - the policy keeps acting on the frame it started
+        with and walks into whatever the reset screen put in front of it.
+        """
+        with self.lock:
+            if self.model_status != "ready" or self.done:
+                return None
+            observation = self.observation
+            hold = self.hold_frames
+            input_frame = self.frames
+            self.busy = True
+            self.revision += 1
+        try:
+            action, diagnostics = self.decide(observation)
+            with self.lock:
+                self.busy = False
+                result = self.game.advance(self.env, action, hold, observation)
+                self.game.finish_memory(self.memory, observation, self.env,
+                                        self.info, action, result)
+                self._install_result(action, result, diagnostics,
+                                     diagnostics.get("latency_ms"),
+                                     input_frame, record=True)
+            return action, diagnostics, result
+        except Exception as exc:
+            with self.lock:
+                self.error = f"Engine error: {exc}"
+            raise
+        finally:
+            with self.lock:
+                self.busy = False
+                self.revision += 1
 
     @staticmethod
     def _history_brain(brain: dict | None, diagnostics: dict) -> dict | None:

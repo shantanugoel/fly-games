@@ -6,6 +6,7 @@ import argparse
 
 import pytest
 
+from conftest import needs_brain
 from fly_games import cli
 
 
@@ -107,3 +108,21 @@ def test_run_dispatches_to_the_handler(monkeypatch):
     monkeypatch.setitem(cli.COMMANDS, "readouts", fake)
     assert cli.run(parse(["readouts"])) == 0
     assert seen == {"called": True}
+
+@needs_brain
+def test_play_acts_on_a_world_that_moves(capsys, needs_rom, tmp_path):
+    """The regression: `play` once re-decided on a frozen frame until Mario died.
+
+    Checked on the real thing because the symptom only appears when a policy
+    actually depends on what it sees - the scripted baseline walked into the
+    same wall for 120 decisions and looked fine. The empty readout directory
+    pins this to the hand rule, so a stale readout on someone's disk cannot
+    decide the outcome.
+    """
+    needs_rom("mario")
+    code = cli.run(parse(["play", "--game", "mario", "--policy", "fly",
+                          "--decisions", "40", "--readouts", str(tmp_path)]))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "zero-shot rule" in out
+    assert "episode over" not in out, "the fly died inside 40 decisions"
