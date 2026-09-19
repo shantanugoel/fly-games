@@ -119,7 +119,7 @@ labels they were fitted against, so a stale file fails loudly instead of
 silently mislabelling decisions. Point `FLY_GAMES_READOUTS` elsewhere to keep
 several.
 
-### Reading `cv_score`, and why you should
+### Reading the score, and why `cv_score` is the wrong number
 
 You never need the fly to survive in order to train it. `train` watches the
 **scripted** policy play and records what the fly's descending neurons do while
@@ -127,29 +127,50 @@ that happens; the fly's own readout is not in the loop, so an early death costs
 you nothing. Episodes are also force-cut at `--decisions` and reseeded, so
 `--episodes 8` really is eight different starts.
 
-`cv_score` is the number that decides whether the file is worth keeping. It is
-held-out ridge MSE where **0 means "no better than predicting the mean"**, so a
-negative score is not a weak readout, it is a readout that learned nothing — and
-it is worse than nothing, because installing it *replaces* the zero-shot rule
-that was already working.
+`cv_score` is **not accuracy**. It is a regression R² of a ridge fit against 0/1
+targets, and it goes negative for readouts that pick the right decision almost
+every time — the ridge is being scored on calibration, not on the argmax. The
+number to read is the second line `train` prints: leave-one-episode-out argmax
+accuracy, against the majority-class baseline it has to beat.
 
-Mario demonstrates the trap. Measured over 120 decisions on the same seed:
+For Mario, 4 episodes × 40 decisions:
 
-| pilot                        | outcome              |
-| ---------------------------- | -------------------- |
-| zero-shot rule               | survived all 120     |
-| trained readout, cv −0.067   | died at decision 27  |
-| trained readout, cv −0.208   | died at decision 27  |
+```
+cv_score=-0.0671 (regression R^2 on 0/1 targets - negative is normal even when accurate)
+held-out decisions correct: 90.0% (majority baseline 72.5%, rare-decision recall 72.7%)
+```
 
-More data made it worse, not better: 160 samples scored −0.067 and 1 440 scored
-−0.208. That is the honest answer, and the reason is visible in
-`games/mario/fly.py` — enemies, gaps and walls are all folded onto the same two
-channels (`loom`, `threat`), so a goomba 100 px away and a pit 100 px away look
-alike to the fly while the scripted policy jumps for one and not the other. The
-label is not predictable from the features, so no amount of training recovers
-it. The fix is to encode more of the game into the fly's sensory neurons, not to
-train longer. `train` warns when `cv_score <= 0` and `play` repeats the warning
-when it loads such a readout.
+A negative `cv_score` next to 90% held-out accuracy. Reading the first as failure
+and ignoring the second is a mistake worth a paragraph, because it was made here
+and then written into this file: an earlier revision of this README claimed the
+Mario readout "learned nothing" and told you to delete it. It had not. It decides
+correctly nine times out of ten on episodes it never saw.
+
+### So why does the trained fly still die at decision 27?
+
+Because accuracy is measured open-loop and play is closed-loop. The readout was
+fitted on brain states recorded while the *scripted* policy drove the emulator.
+Once the readout drives it, the emulator visits states it was never trained on,
+the fly's sensory history differs, and the error compounds — the textbook failure
+mode of behaviour cloning. At the moment of death the readout answers `proceed`
+at p=0.61, right on its own boundary, while the hand rule answers `escape` at a
+flat 0.80 and Mario is still alive at decision 120.
+
+That is a distribution-shift problem, not a dead-signal problem, and it has the
+textbook fixes: train on states the fly actually visits (aggregate/Dagger-style),
+widen the window so rates are less quantised, or let a hard reflex on the escape
+neurons override the readout instead of being replaced by it. What does *not* fix
+it is more epochs on the same recorded states — that is how a −0.067 turns into a
+−0.208 while the readout keeps getting less useful in play.
+
+For reference, the encoder is genuinely narrow, and this is worth knowing even
+though it is not what broke the readout: `observe.py` computes 49 leaf facts for
+Mario and `fly.py` reads 5 of them, and `side_events()` exposes only four channels
+(`loom`, `threat`, `shot`, `chase`) times two sides, so enemies, pits and walls
+share afferents. Also measure the dose before adding a channel — `Dm15/Dm16/Dm18`
+(350 neurons) drive the command groups by exactly nothing at every voltage, while
+`T4a–T5d` (6 790 neurons) respond normally, so pool size does not predict how much
+a channel matters.
 
 ## Policies
 

@@ -49,6 +49,13 @@ class ReadoutInfo:
     cv_score: float
     n_samples: int = 0
     trained_at: str | None = None
+    # Leave-one-episode-out argmax accuracy of the readout against its own
+    # labels, with the majority-class baseline it has to beat. cv_score is a
+    # regression R^2 against 0/1 targets and goes negative for classifiers that
+    # are right nearly every time, so it cannot be the number a user decides
+    # with; this one can.
+    accuracy: float | None = None
+    baseline: float | None = None
 
     def public(self) -> dict:
         return {
@@ -58,6 +65,8 @@ class ReadoutInfo:
             "cv_score": self.cv_score,
             "n_samples": self.n_samples,
             "trained_at": self.trained_at,
+            "accuracy": self.accuracy,
+            "baseline": self.baseline,
         }
 
 
@@ -215,6 +224,8 @@ class FlyReadout:
                 )
             info.n_samples = int(meta.get("n_samples", 0))
             info.trained_at = meta.get("trained_at")
+            info.accuracy = meta.get("accuracy")
+            info.baseline = meta.get("baseline")
         return cls(coarse_actions, path, model=model, info=info)
 
 

@@ -46,10 +46,11 @@ def _play(args: argparse.Namespace) -> int:
     engine.set_policy(args.policy)
     coarse_labels = engine.game.fly_coarse_actions()
     readout = engine.get_readout()
-    if readout.trained and (readout.info.cv_score or 0) <= 0:
-        print("note: this readout's cross-validation score is not better than "
-              "predicting the mean,\n"
-              "      so it replaces a hand rule that works with a map that does not.\n"
+    if readout.trained and readout.info.accuracy is not None \
+            and readout.info.baseline is not None \
+            and readout.info.accuracy <= readout.info.baseline:
+        print("note: this readout decides no better than always picking the common\n"
+              "      decision, so it replaces a hand rule that works.\n"
               "      Compare with: --readouts /tmp/empty")
     print(f"{engine.game.meta.title} - policy {engine.policy} - "
           f"{'readout ' + str(readout.info.kind) if readout.trained else 'zero-shot rule'}"
@@ -107,7 +108,15 @@ def _train(args: argparse.Namespace) -> int:
         print(f"Saved {args.game} readout -> {meta['path']}")
         print(f"  kind={meta['kind']}  components={meta['components']}  lam={meta['lam']:g}")
         print(f"  samples={meta['n_samples']}  episodes={meta['episodes']}  "
-              f"cv_score={meta['cv_score']:.4f} (held-out ridge MSE, higher is better)")
+              f"cv_score={meta['cv_score']:.4f} (regression R^2 on 0/1 targets - "
+              "negative is normal even when accurate)")
+        if meta.get("accuracy") is not None:
+            print(f"  held-out decisions correct: {100*meta['accuracy']:.1f}% "
+                  f"(majority baseline {100*meta['baseline']:.1f}%"
+                  + (f", rare-decision recall {100*meta['minority_recall']:.1f}%"
+                     if meta.get("minority_recall") is not None else "") + ")")
+        else:
+            print("  held-out accuracy unavailable: needs --episodes 2 or more")
         if meta["episodes"] < 2:
             # Leave-one-episode-out is what makes this score mean anything:
             # decisions inside one episode are wildly correlated, so scoring
@@ -115,14 +124,15 @@ def _train(args: argparse.Namespace) -> int:
             # printing a number that looks comparable to a real one.
             print("  note: this was a single episode, so the score is plain k-fold, "
                   "not leave-one-episode-out. Raise --episodes.")
-        if meta["cv_score"] <= 0:
-            # A readout at or below the mean has learned nothing, and it is
-            # worse than nothing: it replaces the hand rule that already works.
-            # Mario does this today - the encoder folds enemies, gaps and walls
-            # onto the same two channels, so the label is not predictable from
-            # the features and more data only fits the ambiguity harder.
-            print("  WARNING: cv_score <= 0 means this readout is no better than "
-                  "predicting the mean,\n"
+        acc, base = meta.get("accuracy"), meta.get("baseline")
+        if acc is not None and base is not None and acc <= base:
+            # Accuracy at or below "always give the common answer" means the map
+            # carries no decision, and installing it overrides the hand rule that
+            # already works. This is deliberately NOT keyed on cv_score <= 0: cv
+            # is a regression R^2 on 0/1 targets and stays negative for readouts
+            # that decide correctly almost every time.
+            print("  WARNING: this readout decides no better than always picking the "
+                  "common decision,\n"
                   "           and it now overrides the zero-shot rule that worked. "
                   "Try:\n"
                   f"             fly-games play --game {args.game} --readouts /tmp/empty"
@@ -186,7 +196,14 @@ def _readouts(_args: argparse.Namespace) -> int:
         readout = FlyReadout.load(coarse, path)
         info = readout.info
         print(f"{game_id:<8} {path}  {info.kind}  components={info.components}  "
-              f"lam={info.lam:g}  cv={info.cv_score:.4f}  n={info.n_samples}  {info.trained_at}")
+              f"lam={info.lam:g}  n={info.n_samples}  {info.trained_at}")
+        if info.accuracy is not None:
+            print(f"         held-out decisions correct {100*info.accuracy:.1f}% "
+                  f"vs majority baseline {100*(info.baseline or 0):.1f}%  "
+                  f"(cv={info.cv_score:.4f} is R^2 on 0/1 targets, not accuracy)")
+        else:
+            print(f"         no held-out accuracy recorded (cv={info.cv_score:.4f}); "
+                  "retrain with --episodes 2+")
         print(f"         decisions: {', '.join(coarse)}")
     return 0
 

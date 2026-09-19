@@ -20,7 +20,7 @@ from __future__ import annotations
 import base64
 import os
 import threading
-from collections import deque
+from collections import Counter, deque
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
@@ -531,6 +531,10 @@ class Engine:
             episode_ids=episode_ids,
             path=self.readout_path(),
         )
+        score = self._holdout_score(coarse, kept, episode_ids, game, readout)
+        if score:
+            readout.info.accuracy = score["accuracy"]
+            readout.info.baseline = score["baseline"]
         path = readout.save()
         self._forget_readout()
         self.event(f"Trained {game.meta.id} readout on {X.shape[0]} decisions.")
@@ -544,6 +548,59 @@ class Engine:
             "cv_score": float(readout.model.cv_score),
             "n_samples": int(X.shape[0]),
             "episodes": len(set(episode_ids)),
+            "accuracy": readout.info.accuracy,
+            "baseline": readout.info.baseline,
+            "minority_recall": score.get("minority_recall") if score else None,
+        }
+
+    def _holdout_score(self, coarse, kept, episode_ids, game, readout):
+        """Leave-one-episode-out argmax accuracy, against the majority baseline.
+
+        This exists because cv_score is a regression R^2 on 0/1 targets and reads
+        as failure for a readout that picks the right decision 97% of the time.
+        The question a user actually asks is "would this have decided correctly on
+        an episode it never saw", so score that directly. Each fold refits on a
+        scratch path; the saved model is the one fitted on everything.
+        """
+        ids = list(episode_ids or [])
+        if not ids or len(set(ids)) < 2:
+            return None
+        import tempfile
+
+        labels = [game.fly_coarse_of(fine, obs) for _f, fine, obs in kept]
+        counts = Counter(labels)
+        baseline = max(counts.values()) / len(labels)
+        minority = min(counts, key=counts.get)
+        hits = recall_hits = recall_n = 0
+        for held in sorted(set(ids)):
+            train = [i for i, e in enumerate(ids) if e != held]
+            test = [i for i, e in enumerate(ids) if e == held]
+            if not test or not train:
+                continue
+            with tempfile.TemporaryDirectory() as tmp:
+                fold = FlyReadout.fit(
+                    coarse, [kept[i][0] for i in train],
+                    [kept[i][1] for i in train],
+                    observations=[kept[i][2] for i in train],
+                    coarse_of=game.fly_coarse_of,
+                    episode_ids=[ids[i] for i in train],
+                    path=f"{tmp}/fold.npz",
+                    components=(readout.model.components,),
+                    lambdas=(readout.model.lam,),
+                )
+                for i in test:
+                    picked, _probs = fold.decode(kept[i][0])
+                    hits += picked == labels[i]
+                    if labels[i] == minority:
+                        recall_n += 1
+                        recall_hits += picked == minority
+        if not hits and not recall_n:
+            return None
+        return {
+            "accuracy": hits / len(labels),
+            "baseline": baseline,
+            "minority": minority,
+            "minority_recall": (recall_hits / recall_n) if recall_n else None,
         }
 
     def train(self, decisions: int, episodes: int = 0, on_episode=None) -> dict:
