@@ -93,10 +93,27 @@ def test_threat_drives_escape_and_quiet_does_not():
     game = get_game("mario")
     quiet, _ = game.fly_hand_decode(QUIET, {})
     frightened, _ = game.fly_hand_decode(driven(escape_L=18.0), {})
+    # "proceed" is the unconditional residual, and that is load-bearing rather
+    # than sloppy: the fly fires ~3 spikes at rest across all twelve command
+    # groups, so nearly every decision is silent, and any rule that reads
+    # silence as "halt" stops Mario dead. See hand_decode.
     assert quiet == "proceed"
     assert frightened == "escape"
     assert game.fly_expand("escape", {}) == "right_run_jump"
     assert game.fly_expand("proceed", {}) == "right_run"
+
+
+def test_the_wider_vocabulary_is_expressible():
+    """`backward_*` was computed every decision and thrown away, which capped the
+    fly at "run right" whatever it did. Backing off is the only way past a pipe
+    you are already accelerating into, so it has to be reachable - by the fitted
+    readout, which is what the four-label space is for."""
+    game = get_game("mario")
+    assert game.fly_expand("retreat", {}) == "left_run"
+    assert game.fly_expand("halt", {}) == "wait"
+    assert set(game.fly_coarse_actions()) == {"proceed", "escape", "retreat", "halt"}
+    assert game.fly_coarse_of("left_run", {}) == "retreat"
+    assert game.fly_coarse_of("wait", {}) == "halt"
 
 
 def test_doom_reads_the_steering_channels_separately():

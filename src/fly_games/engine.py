@@ -97,6 +97,8 @@ class Engine:
         self.start_at = int(start_at or 0)
         self._start_blob: object | None = None
         self.start_offset = 0
+        # Decisions remaining in a committed jump. See `_apply_action_lock`.
+        self._action_lock = 0
         self.latency_ms: float | None = None
         self.frames = 0
         self.decisions = 0
@@ -164,7 +166,7 @@ class Engine:
                 if self._progress(obs) >= self.start_at:
                     break
                 key, _ = self.game.scripted(obs)
-                res = self.game.advance(self.env, key, 1, obs)
+                res = self.game.advance(self.env, key, self.hold_frames, obs)
                 self.frame, self.info = res.frame, res.info
                 prev = key
                 frames += 1
@@ -199,6 +201,7 @@ class Engine:
         self.decisions = 0
         self.done = False
         self.completed = False
+        self._action_lock = 0
         if self.start_at:
             self._seek_start()
         self.previous_action = "wait"
@@ -354,6 +357,7 @@ class Engine:
             self.revision += 1
         try:
             action, diagnostics = self.decide(observation)
+            action, diagnostics = self._apply_action_lock(action, diagnostics)
             latency_ms = diagnostics.get("latency_ms")
             with self.lock:
                 if generation != self.generation or self.stop.is_set():
@@ -425,6 +429,29 @@ class Engine:
             })
         self.revision += 1
 
+    def _apply_action_lock(self, action: str, diagnostics: dict) -> tuple[str, dict]:
+        """Hold a committed jump for a minimum number of frames.
+
+        In SMB releasing A mid-arc aborts the jump, so a policy that re-decides
+        every two frames can jump on every decision and still produce nothing
+        but 27 px hops - which is how Mario ended up jumping repeatedly against
+        a wall he could never clear. The lock repeats the chosen action; it does
+        not pause the fly, which keeps stepping one LIF step per frame, so the
+        two clocks stay 1:1. This is `super-mario-bros-rl`'s FrameRepeat, whose
+        stated purpose is "jump consistency".
+        """
+        minimum = int(getattr(self.game.meta, "min_jump_frames", 0) or 0)
+        if self._action_lock > 0:
+            self._action_lock -= 1
+            if action != self.previous_action:
+                diagnostics = {**diagnostics, "action": self.previous_action,
+                               "action_lock": self._action_lock}
+                return self.previous_action, diagnostics
+        elif minimum > 1 and "jump" in action and self.hold_frames < minimum:
+            self._action_lock = -(-minimum // self.hold_frames) - 1
+            diagnostics = {**diagnostics, "action_lock": self._action_lock}
+        return action, diagnostics
+
     def step(self):
         """Take one decision on the caller's thread and return it.
 
@@ -445,6 +472,7 @@ class Engine:
             self.revision += 1
         try:
             action, diagnostics = self.decide(observation)
+            action, diagnostics = self._apply_action_lock(action, diagnostics)
             with self.lock:
                 self.busy = False
                 result = self.game.advance(self.env, action, hold, observation)

@@ -63,26 +63,66 @@ class MarioFlyEncoder(SensoryEncoder):
 
 
 def coarse_actions() -> tuple[str, ...]:
-    return ("proceed", "escape")
+    """The fly's decision vocabulary.
+
+    This used to be `("proceed", "escape")`, which meant all twelve descending
+    motor urges were squeezed through two labels into two button combos: run
+    right, or run right while jumping. `backward_*` and `steer_*` were computed
+    every decision and thrown away, so the fly could not express stopping or
+    backing off no matter what it was doing - and backing off is the only way
+    past a pipe you are already touching.
+    """
+    return ("proceed", "escape", "retreat", "halt")
 
 
 def coarse_of(fine_action: str, observation: dict) -> str:
-    """Train label: a jump action is an escape; everything else is proceed."""
-    return "escape" if "jump" in fine_action else "proceed"
+    """Train label: which urge the teacher acted on.
+
+    The old version was `"escape" if "jump" in fine else "proceed"`, which made
+    the readout a jump detector rather than a policy.
+    """
+    if "left" in fine_action:
+        return "retreat"
+    if fine_action in ("wait", "up", ""):
+        return "halt"
+    if "jump" in fine_action:
+        return "escape"
+    return "proceed"
 
 
 def expand(coarse: str, observation: dict, fine_hint: str | None = None) -> str:
+    if coarse == "retreat":
+        return fine_hint if fine_hint in ("left", "left_run") else "left_run"
+    if coarse == "halt":
+        return "wait"
     if coarse == "escape":
         return fine_hint if fine_hint in ("right_jump", "jump", "right_run_jump") else "right_run_jump"
     return "right_run"
 
 
 def hand_decode(command: dict, observation: dict) -> tuple[str, dict]:
-    escape = max(command.get("escape_L", {}).get("rate", 0.0),
-                 command.get("escape_R", {}).get("rate", 0.0))
-    if escape > 1.5:
-        return "escape", {"escape": 0.8, "proceed": 0.2}
-    return "proceed", {"proceed": 0.8, "escape": 0.2}
+    """Read the fly's escape urge as a Mario decision.
+
+    Deliberately still two-sided, even though the vocabulary is now four. Every
+    attempt to let this decoder use `retreat` and `halt` made Mario worse, and
+    the reason is worth recording: rates in a 24-step window are quantised at
+    2.08 Hz per spike, and across all twelve command groups the fly fires about
+    three spikes at rest, so `forward` is zero on nearly every decision. Any
+    rule that reads silence as "halt" therefore stops him dead - 656 of 708
+    frames walking nowhere - and a low threshold on `backward` turns one stray
+    spike into 503 frames of walking left. "proceed" as the unconditional
+    residual is what made this decoder work, not an accident of it.
+
+    The four-label space is for the fitted readout, which can learn rates from
+    data instead of me guessing thresholds. The hand rule reads two of the four
+    and says so.
+    """
+    escape = max((command.get("escape_L") or {}).get("rate", 0.0),
+                 (command.get("escape_R") or {}).get("rate", 0.0))
+    names = coarse_actions()
+    winner = "escape" if escape > 1.5 else "proceed"
+    other = (1.0 - 0.8) / (len(names) - 1)
+    return winner, {n: (0.8 if n == winner else other) for n in names}
 
 
 __all__ = ["FORWARD", "MarioFlyEncoder", "coarse_actions", "coarse_of", "expand", "hand_decode"]

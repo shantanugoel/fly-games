@@ -22,20 +22,29 @@ from fly_games.types import Action, AdvanceResult, GameMeta, Stat
 
 # NES SMB1 buttons, in joypad action-list order.
 ACTIONS = {
+    # The full button vocabulary, not just the two the fly used to be able to
+    # name. `left` and `wait` are the ones that matter: jump height scales with
+    # running speed, so the only way past a pipe you are already touching is to
+    # back off and run at it.
     "wait": [],
-    "right": ["right"],
-    "right_jump": ["right", "A"],
-    "right_run": ["right", "B"],
-    "right_run_jump": ["right", "B", "A"],
     "left": ["left"],
+    "left_run": ["left", "B"],
     "left_jump": ["left", "A"],
+    "left_run_jump": ["left", "B", "A"],
+    "right": ["right"],
+    "right_run": ["right", "B"],
+    "right_jump": ["right", "A"],
+    "right_run_jump": ["right", "B", "A"],
     "jump": ["A"],
+    "up": ["up"],
 }
 
 _LABELS = {key: key.replace("_", " ") for key in ACTIONS}
 
 
 class MarioGame(Game):
+    # Teacher state for the back-off rule; reset() clears it.
+    _backing_off = False
     meta = GameMeta(
         id="mario",
         title="Super Mario Bros.",
@@ -48,6 +57,7 @@ class MarioGame(Game):
         aspect_height=240,
         button_keys=("left", "right", "A", "B"),
         default_hold_frames=2,
+        min_jump_frames=6,
         brain_steps=24,
         brain_warmup=80,
     )
@@ -70,6 +80,7 @@ class MarioGame(Game):
 
     def reset(self, env, seed: int):
         frame, info = env.reset(seed=seed)
+        self._backing_off = False
         for _ in range(16):
             frame, _, _, _, info = env.step(0)
         return frame, info
@@ -182,6 +193,21 @@ class MarioGame(Game):
 
     def scripted(self, observation: dict) -> tuple[str, dict]:
         mario = observation["mario"]
+        wall = (observation.get("terrain") or {}).get("nearest_obstacle") or {}
+        wall_dx = wall.get("distance_px")
+        # A standing jump is ~30 px and a running jump ~80 px, so Mario pressed
+        # against a pipe jumps forever without clearing it. Back off until there
+        # is room to accelerate, then commit. Hysteresis, because a threshold
+        # without one oscillates: step back, wall no longer touching, step
+        # forward, touching again.
+        if isinstance(wall_dx, (int, float)):
+            if wall_dx <= 2 and mario.get("grounded"):
+                self._backing_off = True
+            if self._backing_off:
+                if wall_dx >= 32:
+                    self._backing_off = False
+                else:
+                    return "left_run", {"source": "scripted", "why": "back off for a run-up"}
         if not mario["grounded"]:
             return "right_run_jump", {}
         if observation.get("jump_already_held"):

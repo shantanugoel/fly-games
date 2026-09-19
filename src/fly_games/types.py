@@ -43,6 +43,10 @@ class GameMeta:
     button_keys: tuple[str, ...]
     hold_frames_options: tuple[int, ...] = (1, 2, 4, 8, 12, 16)
     default_hold_frames: int = 4
+    # Frames a jump must be held to reach full height. Releasing A mid-arc
+    # aborts the jump, so a policy that re-decides faster than this can jump
+    # every single decision and still never clear a pipe.
+    min_jump_frames: int = 0
     default_seed: int = 123
     # Fly-specific: how many brain steps to settle into a decision (dt=20 ms each).
     brain_steps: int = 24
