@@ -57,7 +57,7 @@ class KungFuGame(Game):
         aspect_width=256,
         aspect_height=240,
         button_keys=("left", "right", "up", "down", "A", "B"),
-        default_hold_frames=8,
+        default_hold_frames=2,
         brain_steps=24,
         brain_warmup=80,
     )

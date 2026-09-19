@@ -239,7 +239,8 @@ class Engine:
         inject, input_label = encoder.encode(observation)
         started = monotonic()
         with brain.decision_lock:
-            decision = brain.decide(inject, input_label, field=self.viz)
+            decision = brain.sense(inject, input_label,
+                                   frames=self.hold_frames, field=self.viz)
         latency_ms = round((monotonic() - started) * 1000, 2)
 
         readout = self.get_readout()
@@ -472,7 +473,8 @@ class Engine:
                 fine_action, _ = game.scripted(obs)
                 inject, input_label = encoder.encode(obs)
                 with brain.decision_lock:
-                    decision = brain.decide(inject, input_label, field=False)
+                    decision = brain.sense(inject, input_label,
+                                           frames=self.hold_frames, field=False)
                 samples.append(([float(v) for v in decision.feature()], fine_action, dict(obs)))
                 episode_ids.append(episode)
                 since_boundary += 1

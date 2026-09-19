@@ -73,7 +73,7 @@ class DoomGame(Game):
         aspect_width=640,
         aspect_height=480,
         button_keys=("left", "right", "up", "down", "FIRE", "USE"),
-        default_hold_frames=4,
+        default_hold_frames=1,
         brain_steps=24,
         brain_warmup=80,
     )

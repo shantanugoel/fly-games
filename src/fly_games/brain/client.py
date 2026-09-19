@@ -223,6 +223,13 @@ class FlyBrainClient:
         # Projections computed once from brain.positions + brain.groups.
         self._group_of: np.ndarray | None = None    # (n,) int16, -1 = non-command
         self._grid_cell: np.ndarray | None = None   # (n,) int32, -1 = no position
+        # Rolling record of which command groups fired, one slot per LIF step.
+        # This is what keeps the two clocks honest: the fly steps once per
+        # emulator frame, so a window of `brain_steps` slots covers exactly
+        # `brain_steps` frames of the world it is reacting to.
+        self._ring: np.ndarray | None = None
+        self._ring_at = 0
+        self._ring_filled = 0
         self._positions: np.ndarray | None = None
         self._loaded = False
         # Spatial / visual metadata, built lazily (a few hundred ms).
@@ -300,12 +307,88 @@ class FlyBrainClient:
     def reset(self, seed: int | None = None) -> None:
         b = self._ensure()
         b.reset(seed if seed is not None else self.seed)
+        self.clear_window()
+
+    def clear_window(self) -> None:
+        """Forget the trailing spike window. Call whenever the world restarts,
+        or a new episode would be judged on the last one's afterimage."""
+        self._ring = np.zeros((self.brain_steps, len(COMMAND_GROUPS)), dtype=np.float32)
+        self._ring_at = 0
+        self._ring_filled = 0
+
+    def advance(self, frames: int, inject: Sequence[tuple[np.ndarray, float]] | None = None) -> None:
+        """Step the fly once per emulator frame, holding `inject` constant.
+
+        The fly's clock and the emulator's advance together - one LIF step per
+        frame - so the animal never lives faster than the world it is reacting
+        to. The old design spent `brain_steps` LIF steps on `hold_frames` frames
+        of game, which put half a second of neural time on 67 ms of Mario and
+        made the fly free-run ahead of everything it was supposed to be sensing.
+        Same spike budget here, but those steps now cover `brain_steps` real
+        frames instead of `hold_frames` of them.
+        """
+        if self._ring is None:
+            self.clear_window()
+        b = self._ensure()
+        gid = self._group_of
+        if gid is None:
+            raise RuntimeError("brain projections not initialized")
+        held = list(inject) if inject else []
+        for _ in range(max(0, int(frames))):
+            fired = b.step(inject=held)
+            row = self._ring[self._ring_at]
+            row[:] = 0.0
+            g = gid[fired]
+            g = g[g >= 0]
+            if g.size:
+                row[g] = 1.0
+            self._ring_at = (self._ring_at + 1) % self.brain_steps
+            self._ring_filled = min(self._ring_filled + 1, self.brain_steps)
+
+    def command_rates(self) -> dict[str, dict[str, float]]:
+        """Descending rates over the trailing window, in Hz of fly time."""
+        span = max(1, self._ring_filled)
+        counts = self._ring[:span].sum(axis=0) if self._ring is not None else np.zeros(len(COMMAND_GROUPS))
+        dt = self._ensure().dt
+        return {name: {"count": float(c), "rate": float(c / span / dt)}
+                for name, c in zip(COMMAND_GROUPS, counts)}
+
+    def sense(self, inject, input: dict | None = None, frames: int = 1,
+              field: bool = False) -> BrainDecision:
+        """Advance the shared clock by `frames`, then read the fly's urges.
+
+        This is the turn-based contract made explicit: the game is frozen while
+        the fly steps, the fly is frozen while the game runs, and neither can
+        outrun the other. Nothing here is real time, so the ~80 ms a decision
+        costs is a training cost, not a control limitation.
+        """
+        self.advance(frames, inject)
+        b = self._ensure()
+        span = max(1, self._ring_filled)
+        counts = self._ring[:span].sum(axis=0)
+        command = {name: {"count": float(c), "rate": float(c / span / b.dt)}
+                   for name, c in zip(COMMAND_GROUPS, counts)}
+        fired_all = np.flatnonzero(self._ring[:span].sum(axis=0) > 0).astype(np.int64)
+        return BrainDecision(
+            fired=fired_all,
+            grid=np.zeros(self.grid_h * self.grid_w, dtype=np.float32).reshape(self.grid_h, self.grid_w),
+            command=command,
+            window_trace=self._ring[:span].copy(),
+            input=input or {},
+            steps=span,
+            dt=b.dt,
+            field=self.spike_field(fired_all) if field else None,
+            kinds={},
+        )
 
     def warmup(self, steps: int | None = None) -> None:
-        """Let the silent network settle to its resting rate before real decisions."""
-        b = self._ensure()
-        for _ in range(int(steps or self.brain_warmup)):
-            b.step()
+        """Let the silent network settle to its resting rate before real decisions.
+
+        Goes through `advance` rather than stepping directly, so the trailing
+        window is prefilled with resting activity instead of opening on zeros -
+        an all-zero first decision reads as a dead fly to the readout.
+        """
+        self.advance(int(steps or self.brain_warmup))
 
     # --------------------------------------------------------------------------
     # one decision

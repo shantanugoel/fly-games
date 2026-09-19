@@ -41,7 +41,7 @@ class GameMeta:
     aspect_width: int
     aspect_height: int
     button_keys: tuple[str, ...]
-    hold_frames_options: tuple[int, ...] = (4, 8, 12, 16)
+    hold_frames_options: tuple[int, ...] = (1, 2, 4, 8, 12, 16)
     default_hold_frames: int = 4
     default_seed: int = 123
     # Fly-specific: how many brain steps to settle into a decision (dt=20 ms each).
