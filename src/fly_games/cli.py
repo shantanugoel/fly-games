@@ -41,7 +41,7 @@ def _play(args: argparse.Namespace) -> int:
     """Run the fly through a real episode and print each thought as it happens."""
     from fly_games.engine import Engine
 
-    engine = Engine(game_id=args.game, seed=args.seed,
+    engine = Engine(game_id=args.game, seed=args.seed, start_at=args.start_at,
                     **({"readout_dir": args.readouts} if args.readouts else {}))
     engine.set_policy(args.policy)
     coarse_labels = engine.game.fly_coarse_actions()
@@ -91,7 +91,7 @@ def _train(args: argparse.Namespace) -> int:
     per-game readout. This is the only thing in the project that is ever fitted."""
     from fly_games.engine import Engine
 
-    engine = Engine(game_id=args.game)
+    engine = Engine(game_id=args.game, start_at=getattr(args, "start_at", 0))
     episodes = max(1, args.episodes)
     total = args.decisions * episodes
     print(f"Watching the scripted policy play {args.game} for {total} decisions "
@@ -286,11 +286,22 @@ def build_parser() -> argparse.ArgumentParser:
     play.add_argument("--readouts", default=None,
                       help="where to load readouts from (default: ./readouts; point it at an "
                            "empty directory to fly on the zero-shot rule)")
+    play.add_argument("--hold", type=int, default=None,
+                      help="emulator frames per decision, which is also how many LIF steps "
+                           "the fly gets per decision since the clocks were aligned")
+    play.add_argument("--start-at", type=int, default=0, metavar="X",
+                      help="start every episode at world-x X (MidStart-style curriculum): "
+                           "the scripted policy walks there once, the emulator state is "
+                           "snapshotted, and each episode resumes from it")
     play.add_argument("-v", "--verbose", action="store_true",
                       help="also print the sensory drives behind each decision")
 
     train = sub.add_parser("train", help="fit a game's readout (the only trained part)")
     _game_flag(train)
+    train.add_argument("--start-at", type=int, default=0, metavar="X",
+                       help="train from world-x X rather than the level start, so the "
+                            "readout sees the parts of the level it would otherwise die "
+                            "before reaching")
     train.add_argument("--episodes", type=int, default=8,
                        help="how many separate episodes to collect (each gets its "
                             "own seed, which is what makes the CV honest)")

@@ -47,6 +47,15 @@ class Game(ABC):
         """UI facts/overlays/text. Default: fallback to the observation text."""
         return {"facts": [], "overlays": [], "text": str(observation.get("text", ""))}
 
+    def dump_state(self, env) -> object | None:
+        """An opaque blob restorable by `load_state`, or None if this platform
+        cannot save and restore. Used to start episodes deeper into a level."""
+        return None
+
+    def load_state(self, env, blob: object) -> bool:
+        """Restore a blob from `dump_state`. True if the emulator took it."""
+        return False
+
     def stats(self, observation: dict, info: dict, session: dict):
         return []
 

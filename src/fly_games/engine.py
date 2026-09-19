@@ -61,7 +61,7 @@ class Engine:
     """One playable episode plus the fly brain driving it."""
 
     def __init__(self, game_id: str = "mario", readout_dir: str | Path = "readouts",
-                 seed: int | None = None):
+                 seed: int | None = None, start_at: int = 0):
         load_dotenv()
         self.lock = threading.RLock()
         self.wake = threading.Event()
@@ -90,6 +90,13 @@ class Engine:
         self.last_diagnostics: dict = {}
         self.buttons: list[str] = []
         self.last_reason: str | None = None
+        # MidStart-style curriculum: begin episodes deeper into the level. The
+        # blob is captured once by walking the scripted policy and then restored,
+        # because the emulator is deterministic and re-walking it every episode
+        # would cost the very time the curriculum exists to save.
+        self.start_at = int(start_at or 0)
+        self._start_blob: object | None = None
+        self.start_offset = 0
         self.latency_ms: float | None = None
         self.frames = 0
         self.decisions = 0
@@ -141,6 +148,50 @@ class Engine:
             self.env = None
         self.env = self.game.create_env()
 
+    def _seek_start(self) -> None:
+        """Walk the scripted policy to `start_at`, snapshot, and come back.
+
+        Borrowed from `super-mario-bros-rl`'s MidStart: the point is not to make
+        the episode shorter for convenience, it is that everything past the first
+        screen is otherwise unmeasurable. Only the scripted policy is used for
+        the walk, so the start state never depends on what the fly does.
+        """
+        if self._start_blob is None:
+            mem = self.game.new_memory()
+            prev, frames = "wait", 0
+            while frames < 4000:
+                obs = self.game.observe(self.env, self.info, mem, 1, prev)
+                if self._progress(obs) >= self.start_at:
+                    break
+                key, _ = self.game.scripted(obs)
+                res = self.game.advance(self.env, key, 1, obs)
+                self.frame, self.info = res.frame, res.info
+                prev = key
+                frames += 1
+                if res.terminated or res.truncated:
+                    break
+            blob = self.game.dump_state(self.env)
+            if blob is None:
+                self.start_at = 0
+                self.last_diagnostics["start_at"] = "unsupported by this platform"
+                return
+            self._start_blob = blob
+        if not self.game.load_state(self.env, self._start_blob):
+            self.start_at = 0
+            return
+        self.memory = self.game.new_memory()
+        obs = self.game.observe(self.env, self.info, self.memory, 1, "wait")
+        self.start_offset = int(self._progress(obs))
+        self.last_diagnostics["start_at"] = self.start_offset
+
+    def _progress(self, observation: dict) -> float:
+        """How far into the level we are, for the purpose of hitting a target."""
+        state = observation.get(self.game.meta.id) or {}
+        for key in ("x", "player_x", "pos_x"):
+            if isinstance(state.get(key), (int, float)):
+                return float(state[key])
+        return float(self.frames)
+
     def _reset_episode(self, *, record: bool):
         self.frame, self.info = self.game.reset(self.env, self.seed)
         self.memory = self.game.new_memory()
@@ -148,6 +199,8 @@ class Engine:
         self.decisions = 0
         self.done = False
         self.completed = False
+        if self.start_at:
+            self._seek_start()
         self.previous_action = "wait"
         self.last_scores = []
         self.last_model_action = None
